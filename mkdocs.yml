@@ -2,5 +2,9 @@ site_name: KayBeeStat_DKMS -- docs
 site_url: https://kaybeestat.danglingptr.io
 theme:
   name: material
+  palette:
+    scheme: slate
+    primary: deep purple
+    accent: purple
 plugins:
   - privacy
