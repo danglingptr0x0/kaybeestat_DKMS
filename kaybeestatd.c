@@ -30,7 +30,10 @@ typedef struct
     uint64_t avg_cps;
     uint64_t peak_kps;
     uint64_t avg_hold_ns;
+    uint64_t hold_var_ns;
     uint64_t longest_hold_ns;
+    uint64_t avg_gap_ns;
+    uint64_t gap_var_ns;
     uint64_t shortest_gap_ns;
     uint64_t longest_gap_ns;
     uint32_t per_key_cunt[KB_KEY_MAX];
@@ -56,7 +59,10 @@ typedef struct
     uint64_t avg_cps;
     uint64_t peak_kps;
     uint64_t avg_hold_ns;
+    uint64_t hold_var_ns;
     uint64_t longest_hold_ns;
+    uint64_t avg_gap_ns;
+    uint64_t gap_var_ns;
     uint64_t shortest_gap_ns;
     uint64_t longest_gap_ns;
 } kb_window_stats_pub_t;
@@ -88,7 +94,7 @@ static void kb_signal_handler(int sig)
     kb_running = 0;
 }
 
-static int kb_ensure_state_dir(void)
+static int kb_state_dir_ensure(void)
 {
     struct group *grp = NULL;
     gid_t gid = 0;
@@ -104,7 +110,7 @@ static int kb_ensure_state_dir(void)
     return 0;
 }
 
-static int kb_load_state(void)
+static int kb_state_load(void)
 {
     int fd = 0;
     ssize_t ret = 0;
@@ -124,7 +130,7 @@ static int kb_load_state(void)
     return 0;
 }
 
-static int kb_save_state(const kb_persistent_t *state)
+static int kb_state_save(const kb_persistent_t *state)
 {
     int fd = 0;
     ssize_t ret = 0;
@@ -155,7 +161,7 @@ static int kb_save_state(const kb_persistent_t *state)
     return 0;
 }
 
-static int kb_write_pub_file(const kb_stats_pub_t *pub)
+static int kb_pub_file_write(const kb_stats_pub_t *pub)
 {
     int fd = 0;
     ssize_t ret = 0;
@@ -193,7 +199,7 @@ static int kb_write_pub_file(const kb_stats_pub_t *pub)
     return 0;
 }
 
-static int kb_read_device(kb_stats_t *stats)
+static int kb_device_read(kb_stats_t *stats)
 {
     int fd = 0;
     ssize_t ret = 0;
@@ -207,7 +213,7 @@ static int kb_read_device(kb_stats_t *stats)
     return (ret == sizeof(*stats)) ? 0 : -1;
 }
 
-static void kb_accumulate(kb_persistent_t *accum, const kb_stats_t *current)
+static void kb_stats_accumulate(kb_persistent_t *accum, const kb_stats_t *current)
 {
     accum->total_uptime_ns = kb_baseline.total_uptime_ns + current->uptime_ns;
     accum->total_keystrokes = kb_baseline.total_keystrokes + current->windows[0].keystroke_cunt;
@@ -216,7 +222,7 @@ static void kb_accumulate(kb_persistent_t *accum, const kb_stats_t *current)
     accum->total_word_dels = kb_baseline.total_word_dels + current->windows[0].word_del_cunt;
 }
 
-static void kb_build_pub(kb_stats_pub_t *pub, const kb_stats_t *current, const kb_persistent_t *accum)
+static void kb_pub_build(kb_stats_pub_t *pub, const kb_stats_t *current, const kb_persistent_t *accum)
 {
     size_t i = 0;
 
@@ -234,7 +240,10 @@ static void kb_build_pub(kb_stats_pub_t *pub, const kb_stats_t *current, const k
         pub->windows[i].avg_cps = current->windows[i].avg_cps;
         pub->windows[i].peak_kps = current->windows[i].peak_kps;
         pub->windows[i].avg_hold_ns = current->windows[i].avg_hold_ns;
+        pub->windows[i].hold_var_ns = current->windows[i].hold_var_ns;
         pub->windows[i].longest_hold_ns = current->windows[i].longest_hold_ns;
+        pub->windows[i].avg_gap_ns = current->windows[i].avg_gap_ns;
+        pub->windows[i].gap_var_ns = current->windows[i].gap_var_ns;
         pub->windows[i].shortest_gap_ns = current->windows[i].shortest_gap_ns;
         pub->windows[i].longest_gap_ns = current->windows[i].longest_gap_ns;
     }
@@ -256,13 +265,13 @@ int main(void)
     signal(SIGTERM, kb_signal_handler);
     signal(SIGINT, kb_signal_handler);
 
-    if (kb_ensure_state_dir() < 0)
+    if (kb_state_dir_ensure() < 0)
     {
         fprintf(stderr, "kaybeestatd: failed to create state dir\n");
         return 1;
     }
 
-    (void)kb_load_state();
+    (void)kb_state_load();
 
     fprintf(stdout, "kaybeestatd: started; baseline: %lu keystrokes\n", (unsigned long)kb_baseline.total_keystrokes);
 
@@ -272,31 +281,31 @@ int main(void)
     {
         time_t now = time(NULL);
 
-        if (kb_read_device(&current) == 0)
+        if (kb_device_read(&current) == 0)
         {
             if ((current.uptime_ns < last_module_uptime || (current.uptime_ns < 1000000000ULL && last_module_uptime > 60000000000ULL)) && last_module_uptime > 0)
             {
                 fprintf(stdout, "kaybeestatd: module reload detected; committing baseline\n");
                 kb_baseline = accum;
-                (void)kb_save_state(&kb_baseline);
+                (void)kb_state_save(&kb_baseline);
             }
 
             last_module_uptime = current.uptime_ns;
 
-            kb_accumulate(&accum, &current);
-            kb_build_pub(&pub, &current, &accum);
-            (void)kb_write_pub_file(&pub);
+            kb_stats_accumulate(&accum, &current);
+            kb_pub_build(&pub, &current, &accum);
+            (void)kb_pub_file_write(&pub);
 
-            if (now - last_save >= KB_SAVE_INTERVAL_SECS) { if (kb_save_state(&accum) == 0) { last_save = now; } }
+            if (now - last_save >= KB_SAVE_INTERVAL_SECS) { if (kb_state_save(&accum) == 0) { last_save = now; } }
         }
 
         sleep(1);
     }
 
-    if (kb_read_device(&current) == 0)
+    if (kb_device_read(&current) == 0)
     {
-        kb_accumulate(&accum, &current);
-        (void)kb_save_state(&accum);
+        kb_stats_accumulate(&accum, &current);
+        (void)kb_state_save(&accum);
     }
 
     fprintf(stdout, "kaybeestatd: shutdown; saved %lu keystrokes\n", (unsigned long)accum.total_keystrokes);

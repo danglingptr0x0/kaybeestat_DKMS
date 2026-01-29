@@ -44,7 +44,10 @@ typedef struct
     uint64_t avg_cps;
     uint64_t peak_kps;
     uint64_t avg_hold_ns;
+    uint64_t hold_var_ns;
     uint64_t longest_hold_ns;
+    uint64_t avg_gap_ns;
+    uint64_t gap_var_ns;
     uint64_t shortest_gap_ns;
     uint64_t longest_gap_ns;
     uint32_t per_key_cunt[KB_KEY_MAX];
@@ -70,7 +73,10 @@ typedef struct
     uint64_t avg_cps;
     uint64_t peak_kps;
     uint64_t avg_hold_ns;
+    uint64_t hold_var_ns;
     uint64_t longest_hold_ns;
+    uint64_t avg_gap_ns;
+    uint64_t gap_var_ns;
     uint64_t shortest_gap_ns;
     uint64_t longest_gap_ns;
 } kb_window_stats_pub_t;
@@ -308,9 +314,9 @@ static void kb_test_rdwr_rejected(void)
 
 static void kb_test_struct_size(void)
 {
-    KB_TEST_ASSERT(sizeof(kb_window_stats_t) == 12 * 8 + KB_KEY_MAX * 4, "kb_window_stats_t size mismatch");
+    KB_TEST_ASSERT(sizeof(kb_window_stats_t) == 15 * 8 + KB_KEY_MAX * 4, "kb_window_stats_t size mismatch");
     KB_TEST_ASSERT(sizeof(kb_stats_t) == 16 + KB_WINDOW_CUNT * sizeof(kb_window_stats_t), "kb_stats_t size mismatch");
-    KB_TEST_ASSERT(sizeof(kb_window_stats_pub_t) == 12 * 8, "kb_window_stats_pub_t size mismatch");
+    KB_TEST_ASSERT(sizeof(kb_window_stats_pub_t) == 15 * 8, "kb_window_stats_pub_t size mismatch");
     KB_TEST_ASSERT(sizeof(kb_stats_pub_t) == 16 + KB_WINDOW_CUNT * sizeof(kb_window_stats_pub_t), "kb_stats_pub_t size mismatch");
 }
 
@@ -1179,6 +1185,176 @@ static void kb_test_del_in_all_windows(void)
     kb_uinput_dev_destroy(uinput_fd);
 }
 
+// variance tests
+
+static void kb_test_hold_variance_nonzero(void)
+{
+    int uinput_fd = 0;
+    int dev_fd = 0;
+    kb_stats_t stats;
+
+    uinput_fd = kb_uinput_dev_create();
+    KB_TEST_ASSERT(uinput_fd >= 0, "uinput create failed");
+
+    dev_fd = open("/dev/kaybeestat", O_RDONLY);
+    KB_TEST_ASSERT(dev_fd >= 0, "open failed");
+
+    KB_TEST_ASSERT(kb_uinput_key_emit(uinput_fd, KEY_A, 1) == 0, "press A failed");
+    usleep(20000);
+    KB_TEST_ASSERT(kb_uinput_key_emit(uinput_fd, KEY_A, 0) == 0, "release A failed");
+    usleep(10000);
+
+    KB_TEST_ASSERT(kb_uinput_key_emit(uinput_fd, KEY_B, 1) == 0, "press B failed");
+    usleep(100000);
+    KB_TEST_ASSERT(kb_uinput_key_emit(uinput_fd, KEY_B, 0) == 0, "release B failed");
+    usleep(10000);
+
+    KB_TEST_ASSERT(kb_uinput_key_emit(uinput_fd, KEY_C, 1) == 0, "press C failed");
+    usleep(50000);
+    KB_TEST_ASSERT(kb_uinput_key_emit(uinput_fd, KEY_C, 0) == 0, "release C failed");
+    usleep(50000);
+
+    KB_TEST_ASSERT(kb_stats_rd(dev_fd, &stats) == 0, "read failed");
+
+    fprintf(stdout, "  hold_var_ns: %" PRIu64 "\n", stats.windows[0].hold_var_ns);
+    KB_TEST_ASSERT(stats.windows[0].hold_var_ns > 0, "hold variance should be nonzero after varied hold times");
+
+    close(dev_fd);
+    kb_uinput_dev_destroy(uinput_fd);
+}
+
+static void kb_test_gap_variance_nonzero(void)
+{
+    int uinput_fd = 0;
+    int dev_fd = 0;
+    kb_stats_t stats;
+
+    uinput_fd = kb_uinput_dev_create();
+    KB_TEST_ASSERT(uinput_fd >= 0, "uinput create failed");
+
+    dev_fd = open("/dev/kaybeestat", O_RDONLY);
+    KB_TEST_ASSERT(dev_fd >= 0, "open failed");
+
+    KB_TEST_ASSERT(kb_uinput_key_press(uinput_fd, KEY_D) == 0, "press D failed");
+    usleep(20000);
+    KB_TEST_ASSERT(kb_uinput_key_press(uinput_fd, KEY_E) == 0, "press E failed");
+    usleep(100000);
+    KB_TEST_ASSERT(kb_uinput_key_press(uinput_fd, KEY_F) == 0, "press F failed");
+    usleep(50000);
+    KB_TEST_ASSERT(kb_uinput_key_press(uinput_fd, KEY_G) == 0, "press G failed");
+    usleep(50000);
+
+    KB_TEST_ASSERT(kb_stats_rd(dev_fd, &stats) == 0, "read failed");
+
+    fprintf(stdout, "  gap_var_ns: %" PRIu64 "; avg_gap_ns: %" PRIu64 "\n", stats.windows[0].gap_var_ns, stats.windows[0].avg_gap_ns);
+    KB_TEST_ASSERT(stats.windows[0].gap_var_ns > 0, "gap variance should be nonzero after varied gaps");
+    KB_TEST_ASSERT(stats.windows[0].avg_gap_ns > 0, "avg gap should be nonzero");
+
+    close(dev_fd);
+    kb_uinput_dev_destroy(uinput_fd);
+}
+
+static void kb_test_variance_in_all_windows(void)
+{
+    int uinput_fd = 0;
+    int dev_fd = 0;
+    kb_stats_t stats;
+    uint32_t w = 0;
+
+    uinput_fd = kb_uinput_dev_create();
+    KB_TEST_ASSERT(uinput_fd >= 0, "uinput create failed");
+
+    dev_fd = open("/dev/kaybeestat", O_RDONLY);
+    KB_TEST_ASSERT(dev_fd >= 0, "open failed");
+
+    KB_TEST_ASSERT(kb_uinput_key_emit(uinput_fd, KEY_H, 1) == 0, "press H failed");
+    usleep(30000);
+    KB_TEST_ASSERT(kb_uinput_key_emit(uinput_fd, KEY_H, 0) == 0, "release H failed");
+    usleep(10000);
+
+    KB_TEST_ASSERT(kb_uinput_key_emit(uinput_fd, KEY_I, 1) == 0, "press I failed");
+    usleep(120000);
+    KB_TEST_ASSERT(kb_uinput_key_emit(uinput_fd, KEY_I, 0) == 0, "release I failed");
+    usleep(50000);
+
+    KB_TEST_ASSERT(kb_stats_rd(dev_fd, &stats) == 0, "read failed");
+
+    for (w = 0; w < KB_WINDOW_CUNT; w++)
+    {
+        fprintf(stdout, "  window %u: hold_var=%" PRIu64 " gap_var=%" PRIu64 "\n", w, stats.windows[w].hold_var_ns, stats.windows[w].gap_var_ns);
+        KB_TEST_ASSERT(stats.windows[w].hold_var_ns > 0 || stats.windows[w].keystroke_cunt < 2, "hold variance should propagate to all windows");
+    }
+
+    close(dev_fd);
+    kb_uinput_dev_destroy(uinput_fd);
+}
+
+static void kb_test_single_hold_zero_variance(void)
+{
+    int uinput_fd = 0;
+    int dev_fd = 0;
+    kb_stats_t before;
+    kb_stats_t after;
+
+    uinput_fd = kb_uinput_dev_create();
+    KB_TEST_ASSERT(uinput_fd >= 0, "uinput create failed");
+
+    dev_fd = open("/dev/kaybeestat", O_RDONLY);
+    KB_TEST_ASSERT(dev_fd >= 0, "open failed");
+
+    KB_TEST_ASSERT(kb_stats_rd(dev_fd, &before) == 0, "baseline read failed");
+
+    if (before.windows[0].keystroke_cunt == 0)
+    {
+        KB_TEST_ASSERT(kb_uinput_key_emit(uinput_fd, KEY_J, 1) == 0, "press J failed");
+        usleep(50000);
+        KB_TEST_ASSERT(kb_uinput_key_emit(uinput_fd, KEY_J, 0) == 0, "release J failed");
+        usleep(50000);
+
+        KB_TEST_ASSERT(kb_stats_rd(dev_fd, &after) == 0, "after read failed");
+
+        fprintf(stdout, "  single hold variance: %" PRIu64 "\n", after.windows[0].hold_var_ns);
+        KB_TEST_ASSERT(after.windows[0].hold_var_ns == 0, "single hold should have zero variance");
+    }
+    else
+    {
+        fprintf(stdout, "  SKIP: module already has keystrokes\n");
+        kb_test_pass_cunt++;
+    }
+
+    close(dev_fd);
+    kb_uinput_dev_destroy(uinput_fd);
+}
+
+static void kb_test_avg_gap_ordering(void)
+{
+    int uinput_fd = 0;
+    int dev_fd = 0;
+    kb_stats_t stats;
+
+    uinput_fd = kb_uinput_dev_create();
+    KB_TEST_ASSERT(uinput_fd >= 0, "uinput create failed");
+
+    dev_fd = open("/dev/kaybeestat", O_RDONLY);
+    KB_TEST_ASSERT(dev_fd >= 0, "open failed");
+
+    KB_TEST_ASSERT(kb_uinput_key_press(uinput_fd, KEY_K) == 0, "press K failed");
+    usleep(20000);
+    KB_TEST_ASSERT(kb_uinput_key_press(uinput_fd, KEY_L) == 0, "press L failed");
+    usleep(80000);
+    KB_TEST_ASSERT(kb_uinput_key_press(uinput_fd, KEY_M) == 0, "press M failed");
+    usleep(50000);
+
+    KB_TEST_ASSERT(kb_stats_rd(dev_fd, &stats) == 0, "read failed");
+
+    fprintf(stdout, "  shortest: %" PRIu64 "; avg: %" PRIu64 "; longest: %" PRIu64 "\n", stats.windows[0].shortest_gap_ns, stats.windows[0].avg_gap_ns, stats.windows[0].longest_gap_ns);
+    KB_TEST_ASSERT(stats.windows[0].shortest_gap_ns <= stats.windows[0].avg_gap_ns, "shortest gap should be <= avg gap");
+    KB_TEST_ASSERT(stats.windows[0].avg_gap_ns <= stats.windows[0].longest_gap_ns, "avg gap should be <= longest gap");
+
+    close(dev_fd);
+    kb_uinput_dev_destroy(uinput_fd);
+}
+
 // runner
 
 int main(void)
@@ -1244,6 +1420,13 @@ int main(void)
     kb_test_word_del_alt_backspace();
     kb_test_no_del_regular_w();
     kb_test_del_in_all_windows();
+
+    fprintf(stdout, "-- variance --\n");
+    kb_test_hold_variance_nonzero();
+    kb_test_gap_variance_nonzero();
+    kb_test_variance_in_all_windows();
+    kb_test_single_hold_zero_variance();
+    kb_test_avg_gap_ordering();
 
     fprintf(stdout, "-- stress --\n");
     kb_test_rapid_burst();

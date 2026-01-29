@@ -42,13 +42,17 @@ typedef struct
     uint32_t word_del_cunt;
     uint64_t hold_sum_ns;
     uint32_t hold_cunt;
+    uint64_t hold_m2;
     uint64_t longest_hold_ns;
+    uint64_t gap_sum_ns;
+    uint32_t gap_cunt;
+    uint64_t gap_m2;
     uint64_t shortest_gap_ns;
     uint64_t longest_gap_ns;
     uint32_t per_key_cunt[KB_KEY_MAX];
 } kb_bucket_t;
 
-static inline int kb_is_printable(unsigned int code)
+static inline int kb_key_printable_is(unsigned int code)
 {
     if (code >= KEY_1 && code <= KEY_0) { return 1; }
 
@@ -78,7 +82,10 @@ typedef struct
     uint64_t avg_cps;
     uint64_t peak_kps;
     uint64_t avg_hold_ns;
+    uint64_t hold_var_ns;
     uint64_t longest_hold_ns;
+    uint64_t avg_gap_ns;
+    uint64_t gap_var_ns;
     uint64_t shortest_gap_ns;
     uint64_t longest_gap_ns;
     uint32_t per_key_cunt[KB_KEY_MAX];
@@ -104,7 +111,10 @@ typedef struct
     uint64_t avg_cps;
     uint64_t peak_kps;
     uint64_t avg_hold_ns;
+    uint64_t hold_var_ns;
     uint64_t longest_hold_ns;
+    uint64_t avg_gap_ns;
+    uint64_t gap_var_ns;
     uint64_t shortest_gap_ns;
     uint64_t longest_gap_ns;
 } kb_window_stats_pub_t;
@@ -175,16 +185,50 @@ static void kb_bucket_zero(kb_bucket_t *b)
 static void kb_bucket_merge(kb_bucket_t *dst, const kb_bucket_t *src, int skip_perkey)
 {
     size_t idx = 0;
+    uint64_t n_a = 0;
+    uint64_t n_b = 0;
+    uint64_t n_combined = 0;
+    int64_t delta = 0;
+    uint64_t mean_a = 0;
+    uint64_t mean_b = 0;
 
     dst->press_cunt = KB_SAT_ADD32(dst->press_cunt, src->press_cunt);
     dst->release_cunt = KB_SAT_ADD32(dst->release_cunt, src->release_cunt);
     dst->char_cunt = KB_SAT_ADD32(dst->char_cunt, src->char_cunt);
     dst->char_del_cunt = KB_SAT_ADD32(dst->char_del_cunt, src->char_del_cunt);
     dst->word_del_cunt = KB_SAT_ADD32(dst->word_del_cunt, src->word_del_cunt);
+
+    n_a = dst->hold_cunt;
+    n_b = src->hold_cunt;
+    n_combined = n_a + n_b;
+    if (n_combined > 0)
+    {
+        mean_a = (n_a > 0) ? (dst->hold_sum_ns / n_a) : 0;
+        mean_b = (n_b > 0) ? (src->hold_sum_ns / n_b) : 0;
+        delta = (int64_t)mean_b - (int64_t)mean_a;
+        dst->hold_m2 = KB_SAT_ADD64(dst->hold_m2, src->hold_m2);
+        dst->hold_m2 = KB_SAT_ADD64(dst->hold_m2, (uint64_t)(delta * delta) * n_a * n_b / n_combined);
+    }
+
     dst->hold_sum_ns = KB_SAT_ADD64(dst->hold_sum_ns, src->hold_sum_ns);
     dst->hold_cunt = KB_SAT_ADD32(dst->hold_cunt, src->hold_cunt);
 
     if (src->longest_hold_ns > dst->longest_hold_ns) { dst->longest_hold_ns = src->longest_hold_ns; }
+
+    n_a = dst->gap_cunt;
+    n_b = src->gap_cunt;
+    n_combined = n_a + n_b;
+    if (n_combined > 0)
+    {
+        mean_a = (n_a > 0) ? (dst->gap_sum_ns / n_a) : 0;
+        mean_b = (n_b > 0) ? (src->gap_sum_ns / n_b) : 0;
+        delta = (int64_t)mean_b - (int64_t)mean_a;
+        dst->gap_m2 = KB_SAT_ADD64(dst->gap_m2, src->gap_m2);
+        dst->gap_m2 = KB_SAT_ADD64(dst->gap_m2, (uint64_t)(delta * delta) * n_a * n_b / n_combined);
+    }
+
+    dst->gap_sum_ns = KB_SAT_ADD64(dst->gap_sum_ns, src->gap_sum_ns);
+    dst->gap_cunt = KB_SAT_ADD32(dst->gap_cunt, src->gap_cunt);
 
     if (src->shortest_gap_ns < dst->shortest_gap_ns) { dst->shortest_gap_ns = src->shortest_gap_ns; }
 
@@ -225,6 +269,9 @@ static void kb_window_from_ring(kb_window_stats_t *w, const kb_bucket_t *ring, s
     w->shortest_gap_ns = (acc->shortest_gap_ns == U64_MAX) ? 0 : acc->shortest_gap_ns;
     w->longest_gap_ns = acc->longest_gap_ns;
     w->avg_hold_ns = (acc->hold_cunt > 0) ? (acc->hold_sum_ns / acc->hold_cunt) : 0;
+    w->hold_var_ns = (acc->hold_cunt > 0) ? (acc->hold_m2 / acc->hold_cunt) : 0;
+    w->avg_gap_ns = (acc->gap_cunt > 0) ? (acc->gap_sum_ns / acc->gap_cunt) : 0;
+    w->gap_var_ns = (acc->gap_cunt > 0) ? (acc->gap_m2 / acc->gap_cunt) : 0;
 
     duration_secs = cunt;
     if (live_bucket) { duration_secs += 1; }
@@ -378,7 +425,10 @@ static ssize_t kb_dev_rd(struct file *file, char __user *buff, size_t len, loff_
             pub.windows[i].avg_cps = stats->windows[i].avg_cps;
             pub.windows[i].peak_kps = stats->windows[i].peak_kps;
             pub.windows[i].avg_hold_ns = stats->windows[i].avg_hold_ns;
+            pub.windows[i].hold_var_ns = stats->windows[i].hold_var_ns;
             pub.windows[i].longest_hold_ns = stats->windows[i].longest_hold_ns;
+            pub.windows[i].avg_gap_ns = stats->windows[i].avg_gap_ns;
+            pub.windows[i].gap_var_ns = stats->windows[i].gap_var_ns;
             pub.windows[i].shortest_gap_ns = stats->windows[i].shortest_gap_ns;
             pub.windows[i].longest_gap_ns = stats->windows[i].longest_gap_ns;
         }
@@ -448,7 +498,7 @@ static void kb_event(struct input_handle *handle, unsigned int type, unsigned in
     {
         kb_live.press_cunt++;
         kb_live.per_key_cunt[code]++;
-        if (kb_is_printable(code)) { kb_live.char_cunt++; }
+        if (kb_key_printable_is(code)) { kb_live.char_cunt++; }
 
         kb_key_press_ts[code] = now;
 
@@ -458,7 +508,21 @@ static void kb_event(struct input_handle *handle, unsigned int type, unsigned in
 
         if (kb_last_press_ns > 0 && now >= kb_last_press_ns)
         {
+            uint64_t old_mean = 0;
+            uint64_t new_mean = 0;
+            int64_t delta = 0;
+            int64_t delta2 = 0;
+
             gap_ns = now - kb_last_press_ns;
+
+            old_mean = (kb_live.gap_cunt > 0) ? (kb_live.gap_sum_ns / kb_live.gap_cunt) : 0;
+            kb_live.gap_sum_ns = KB_SAT_ADD64(kb_live.gap_sum_ns, gap_ns);
+            kb_live.gap_cunt++;
+            new_mean = kb_live.gap_sum_ns / kb_live.gap_cunt;
+            delta = (int64_t)gap_ns - (int64_t)old_mean;
+            delta2 = (int64_t)gap_ns - (int64_t)new_mean;
+            kb_live.gap_m2 = KB_SAT_ADD64(kb_live.gap_m2, (uint64_t)(delta * delta2));
+
             if (gap_ns < kb_live.shortest_gap_ns) { kb_live.shortest_gap_ns = gap_ns; }
 
             if (gap_ns > kb_live.longest_gap_ns) { kb_live.longest_gap_ns = gap_ns; }
@@ -472,9 +536,21 @@ static void kb_event(struct input_handle *handle, unsigned int type, unsigned in
 
         if (kb_key_press_ts[code] > 0)
         {
+            uint64_t old_mean = 0;
+            uint64_t new_mean = 0;
+            int64_t delta = 0;
+            int64_t delta2 = 0;
+
             hold_ns = now - kb_key_press_ts[code];
+
+            old_mean = (kb_live.hold_cunt > 0) ? (kb_live.hold_sum_ns / kb_live.hold_cunt) : 0;
             kb_live.hold_sum_ns = KB_SAT_ADD64(kb_live.hold_sum_ns, hold_ns);
             kb_live.hold_cunt++;
+            new_mean = kb_live.hold_sum_ns / kb_live.hold_cunt;
+            delta = (int64_t)hold_ns - (int64_t)old_mean;
+            delta2 = (int64_t)hold_ns - (int64_t)new_mean;
+            kb_live.hold_m2 = KB_SAT_ADD64(kb_live.hold_m2, (uint64_t)(delta * delta2));
+
             if (hold_ns > kb_live.longest_hold_ns) { kb_live.longest_hold_ns = hold_ns; }
 
             kb_key_press_ts[code] = 0;
