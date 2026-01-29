@@ -1,0 +1,13 @@
+[Unit]
+Description=KayBeeStat persistence daemon
+After=local-fs.target
+Wants=kaybeestat-module.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/kaybeestatd
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

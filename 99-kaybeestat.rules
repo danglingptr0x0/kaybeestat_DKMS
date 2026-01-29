@@ -1,0 +1,1 @@
+SUBSYSTEM=="misc", KERNEL=="kaybeestat", GROUP="kaybeestat", MODE="0440"
