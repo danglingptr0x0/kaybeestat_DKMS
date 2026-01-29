@@ -991,6 +991,59 @@ static void kb_test_peak_kps_gte_avg(void)
     close(dev_fd);
 }
 
+static void kb_test_rate_window_scaling(void)
+{
+    int dev_fd = 0;
+    kb_stats_t stats;
+
+    dev_fd = open("/dev/kaybeestat", O_RDONLY);
+    KB_TEST_ASSERT(dev_fd >= 0, "open failed");
+
+    KB_TEST_ASSERT(kb_stats_rd(dev_fd, &stats) == 0, "read failed");
+
+    fprintf(stdout, "  w0 (1m): %" PRIu64 " kps; w1 (5m): %" PRIu64 " kps; w2 (30m): %" PRIu64 " kps\n", stats.windows[0].avg_kps, stats.windows[1].avg_kps, stats.windows[2].avg_kps);
+    fprintf(stdout, "  w3 (6h): %" PRIu64 " kps; w4 (24h): %" PRIu64 " kps\n", stats.windows[3].avg_kps, stats.windows[4].avg_kps);
+
+    KB_TEST_ASSERT(stats.windows[1].avg_kps <= stats.windows[0].avg_kps || stats.windows[0].keystroke_cunt == 0, "5m rate should be <= 1m rate");
+    KB_TEST_ASSERT(stats.windows[2].avg_kps <= stats.windows[1].avg_kps || stats.windows[1].keystroke_cunt == 0, "30m rate should be <= 5m rate");
+    KB_TEST_ASSERT(stats.windows[3].avg_kps <= stats.windows[2].avg_kps || stats.windows[2].keystroke_cunt == 0, "6h rate should be <= 30m rate");
+    KB_TEST_ASSERT(stats.windows[4].avg_kps <= stats.windows[3].avg_kps || stats.windows[3].keystroke_cunt == 0, "24h rate should be <= 6h rate");
+
+    close(dev_fd);
+}
+
+static void kb_test_rate_sane_magnitude(void)
+{
+    int uinput_fd = 0;
+    int dev_fd = 0;
+    kb_stats_t stats;
+
+    uinput_fd = kb_uinput_dev_create();
+    KB_TEST_ASSERT(uinput_fd >= 0, "uinput create failed");
+
+    dev_fd = open("/dev/kaybeestat", O_RDONLY);
+    KB_TEST_ASSERT(dev_fd >= 0, "open failed");
+
+    KB_TEST_ASSERT(kb_uinput_key_press(uinput_fd, KEY_F) == 0, "press failed");
+    KB_TEST_ASSERT(kb_uinput_key_press(uinput_fd, KEY_G) == 0, "press failed");
+    KB_TEST_ASSERT(kb_uinput_key_press(uinput_fd, KEY_H) == 0, "press failed");
+    usleep(50000);
+
+    KB_TEST_ASSERT(kb_stats_rd(dev_fd, &stats) == 0, "read failed");
+
+    fprintf(stdout, "  w0: %" PRIu64 " milli-kps; w3 (6h): %" PRIu64 " milli-kps; w4 (24h): %" PRIu64 " milli-kps\n", stats.windows[0].avg_kps, stats.windows[3].avg_kps, stats.windows[4].avg_kps);
+
+    KB_TEST_ASSERT(stats.windows[0].avg_kps < 100000, "1m avg_kps should be < 100 kps (sane magnitude)");
+    KB_TEST_ASSERT(stats.windows[3].avg_kps < 10000, "6h avg_kps should be < 10 kps (sane magnitude)");
+    KB_TEST_ASSERT(stats.windows[4].avg_kps < 10000, "24h avg_kps should be < 10 kps (sane magnitude)");
+
+    KB_TEST_ASSERT(stats.windows[3].avg_kps <= stats.windows[0].avg_kps, "6h rate should be <= 1m rate");
+    KB_TEST_ASSERT(stats.windows[4].avg_kps <= stats.windows[3].avg_kps, "24h rate should be <= 6h rate");
+
+    close(dev_fd);
+    kb_uinput_dev_destroy(uinput_fd);
+}
+
 // rapid burst test
 
 static void kb_test_rapid_burst(void)
@@ -1413,6 +1466,8 @@ int main(void)
     fprintf(stdout, "-- kps --\n");
     kb_test_kps_nonzero_after_typing();
     kb_test_peak_kps_gte_avg();
+    kb_test_rate_window_scaling();
+    kb_test_rate_sane_magnitude();
 
     fprintf(stdout, "-- deletion tracking --\n");
     kb_test_char_del_backspace();

@@ -238,7 +238,7 @@ static void kb_bucket_merge(kb_bucket_t *dst, const kb_bucket_t *src, int skip_p
     if (!skip_perkey) { for (idx = 0; idx < KB_KEY_MAX; idx++) { dst->per_key_cunt[idx] = KB_SAT_ADD32(dst->per_key_cunt[idx], src->per_key_cunt[idx]); } }
 }
 
-static void kb_window_from_ring(kb_window_stats_t *w, const kb_bucket_t *ring, size_t ring_size, size_t head, size_t cunt, const kb_bucket_t *live_bucket, kb_bucket_t *acc, int skip_perkey)
+static void kb_window_from_ring(kb_window_stats_t *w, const kb_bucket_t *ring, size_t ring_size, size_t head, size_t cunt, size_t bucket_secs, const kb_bucket_t *live_bucket, kb_bucket_t *acc, int skip_perkey)
 {
     size_t idx = 0;
     size_t start = 0;
@@ -274,7 +274,7 @@ static void kb_window_from_ring(kb_window_stats_t *w, const kb_bucket_t *ring, s
     w->avg_gap_ns = (acc->gap_cunt > 0) ? (acc->gap_sum_ns / acc->gap_cunt) : 0;
     w->gap_var_ns = (acc->gap_cunt > 0) ? (acc->gap_m2 / acc->gap_cunt) : 0;
 
-    duration_secs = cunt;
+    duration_secs = cunt * bucket_secs;
     if (live_bucket) { duration_secs += 1; }
 
     w->avg_kps = (duration_secs > 0) ? ((uint64_t)acc->press_cunt * 1000 / duration_secs) : 0;
@@ -375,21 +375,21 @@ static ssize_t kb_dev_rd(struct file *file, char __user *buff, size_t len, loff_
     stats->last_vendor = kb_last_vendor;
     stats->last_product = kb_last_product;
 
-    kb_window_from_ring(&stats->windows[0], kb_secs_ring, KB_SECS_RING_SIZE, kb_secs_idx, KB_SECS_RING_SIZE, &kb_live, kb_scratch_rd, !is_root);
+    kb_window_from_ring(&stats->windows[0], kb_secs_ring, KB_SECS_RING_SIZE, kb_secs_idx, KB_SECS_RING_SIZE, 1, &kb_live, kb_scratch_rd, !is_root);
 
-    kb_window_from_ring(&stats->windows[1], kb_mins_ring, KB_MINS_RING_SIZE, kb_mins_idx, 5, &kb_live, kb_scratch_rd, !is_root);
+    kb_window_from_ring(&stats->windows[1], kb_mins_ring, KB_MINS_RING_SIZE, kb_mins_idx, 5, 60, &kb_live, kb_scratch_rd, !is_root);
 
-    kb_window_from_ring(&stats->windows[2], kb_mins_ring, KB_MINS_RING_SIZE, kb_mins_idx, 30, &kb_live, kb_scratch_rd, !is_root);
+    kb_window_from_ring(&stats->windows[2], kb_mins_ring, KB_MINS_RING_SIZE, kb_mins_idx, 30, 60, &kb_live, kb_scratch_rd, !is_root);
 
-    kb_window_from_ring(&stats->windows[3], kb_hours_ring, KB_HOURS_RING_SIZE, kb_hours_idx, 6, &kb_live, kb_scratch_rd, !is_root);
+    kb_window_from_ring(&stats->windows[3], kb_hours_ring, KB_HOURS_RING_SIZE, kb_hours_idx, 6, 3600, &kb_live, kb_scratch_rd, !is_root);
 
-    kb_window_from_ring(&stats->windows[4], kb_hours_ring, KB_HOURS_RING_SIZE, kb_hours_idx, KB_HOURS_RING_SIZE, &kb_live, kb_scratch_rd, !is_root);
+    kb_window_from_ring(&stats->windows[4], kb_hours_ring, KB_HOURS_RING_SIZE, kb_hours_idx, KB_HOURS_RING_SIZE, 3600, &kb_live, kb_scratch_rd, !is_root);
 
-    kb_window_from_ring(&stats->windows[5], kb_days_ring, KB_DAYS_RING_SIZE, kb_days_idx, 7, &kb_live, kb_scratch_rd, !is_root);
+    kb_window_from_ring(&stats->windows[5], kb_days_ring, KB_DAYS_RING_SIZE, kb_days_idx, 7, 86400, &kb_live, kb_scratch_rd, !is_root);
 
-    kb_window_from_ring(&stats->windows[6], kb_days_ring, KB_DAYS_RING_SIZE, kb_days_idx, 30, &kb_live, kb_scratch_rd, !is_root);
+    kb_window_from_ring(&stats->windows[6], kb_days_ring, KB_DAYS_RING_SIZE, kb_days_idx, 30, 86400, &kb_live, kb_scratch_rd, !is_root);
 
-    kb_window_from_ring(&stats->windows[7], kb_days_ring, KB_DAYS_RING_SIZE, kb_days_idx, KB_DAYS_RING_SIZE, &kb_live, kb_scratch_rd, !is_root);
+    kb_window_from_ring(&stats->windows[7], kb_days_ring, KB_DAYS_RING_SIZE, kb_days_idx, KB_DAYS_RING_SIZE, 86400, &kb_live, kb_scratch_rd, !is_root);
 
     spin_unlock_irqrestore(&kb_lock, flags);
 
