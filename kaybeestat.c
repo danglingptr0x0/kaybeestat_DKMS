@@ -30,6 +30,7 @@ MODULE_VERSION("0.7");
 #define KB_MINS_RING_SIZE 60
 #define KB_HOURS_RING_SIZE 24
 #define KB_DAYS_RING_SIZE 365
+#define KB_MIN_GAP_NS 1000000
 
 // data structures
 
@@ -508,24 +509,27 @@ static void kb_event(struct input_handle *handle, unsigned int type, unsigned in
 
         if (kb_last_press_ns > 0 && now >= kb_last_press_ns)
         {
-            uint64_t old_mean = 0;
-            uint64_t new_mean = 0;
-            int64_t delta = 0;
-            int64_t delta2 = 0;
-
             gap_ns = now - kb_last_press_ns;
 
-            old_mean = (kb_live.gap_cunt > 0) ? (kb_live.gap_sum_ns / kb_live.gap_cunt) : 0;
-            kb_live.gap_sum_ns = KB_SAT_ADD64(kb_live.gap_sum_ns, gap_ns);
-            kb_live.gap_cunt++;
-            new_mean = kb_live.gap_sum_ns / kb_live.gap_cunt;
-            delta = (int64_t)gap_ns - (int64_t)old_mean;
-            delta2 = (int64_t)gap_ns - (int64_t)new_mean;
-            kb_live.gap_m2 = KB_SAT_ADD64(kb_live.gap_m2, (uint64_t)(delta * delta2));
+            if (gap_ns >= KB_MIN_GAP_NS)
+            {
+                uint64_t old_mean = 0;
+                uint64_t new_mean = 0;
+                int64_t delta = 0;
+                int64_t delta2 = 0;
 
-            if (gap_ns < kb_live.shortest_gap_ns) { kb_live.shortest_gap_ns = gap_ns; }
+                old_mean = (kb_live.gap_cunt > 0) ? (kb_live.gap_sum_ns / kb_live.gap_cunt) : 0;
+                kb_live.gap_sum_ns = KB_SAT_ADD64(kb_live.gap_sum_ns, gap_ns);
+                kb_live.gap_cunt++;
+                new_mean = kb_live.gap_sum_ns / kb_live.gap_cunt;
+                delta = (int64_t)gap_ns - (int64_t)old_mean;
+                delta2 = (int64_t)gap_ns - (int64_t)new_mean;
+                kb_live.gap_m2 = KB_SAT_ADD64(kb_live.gap_m2, (uint64_t)(delta * delta2));
 
-            if (gap_ns > kb_live.longest_gap_ns) { kb_live.longest_gap_ns = gap_ns; }
+                if (gap_ns < kb_live.shortest_gap_ns) { kb_live.shortest_gap_ns = gap_ns; }
+
+                if (gap_ns > kb_live.longest_gap_ns) { kb_live.longest_gap_ns = gap_ns; }
+            }
         }
 
         kb_last_press_ns = now;
